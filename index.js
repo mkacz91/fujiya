@@ -805,6 +805,7 @@ function onMouseDown(event) {
             layoutSolutionStages();
           }
         }
+        break;
       }
     }
   }

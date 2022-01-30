@@ -4,6 +4,7 @@ import * as THREE from 'https://cdn.skypack.dev/three@v0.132.2'
 const defaultLayer = 0;
 const uiLayer = 1;      // On top of everything  
 const pickLayer = 2;    // Visible only for raycasting
+const uvLayer = 3;      // Only UVs
 
 const controlPointGeometry = new THREE.CircleGeometry(1, 16);
 const whiteMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -453,6 +454,10 @@ class SolutionStage extends THREE.Group {
     this.add(this._root);
     
     this._geometryNeedsUpdate = true;
+
+    this._uvSheet = null;
+    this._isFocused = false;
+    this._uvSheetNeedsUpdate = false;
   }
   
   get predecessor() { return this._predecessor; }
@@ -465,6 +470,15 @@ class SolutionStage extends THREE.Group {
   	return this._shortcutControl ? this._shortcutControl.shortcut : null;
   }
   
+  get isFocused() { return this._isFocused; }
+
+  set isFocused(value) {
+    if (this._isFocused != value) {
+      this._isFocused = value;
+      this._uvSheetNeedsUpdate = true;
+    }
+  }
+
   step() {
   	if (this._shortcutControl) {
     	this._shortcutControl.step();
@@ -484,6 +498,7 @@ class SolutionStage extends THREE.Group {
     
     if (this._geometryNeedsUpdate) {
     	this._geometryNeedsUpdate = false;
+      this._uvSheetNeedsUpdate = true;
       
     	const faceBoundingBox = new THREE.Box2();
       for (let i = 0; i < this._faces.length; ++i) {
@@ -492,18 +507,21 @@ class SolutionStage extends THREE.Group {
       faceBoundingBox.getCenter3(this._root.position).negate();
       
       for (let i = 0; i < this._faces.length; ++i) {
+        const face = this._faces[i];
+
       	if (this._sheet.children.length <= 2 * i) {
-        	const faceMesh = new THREE.Mesh(new THREE.BufferGeometry());
-          const edgeMesh = new THREE.LineSegments(
+        	face.mesh = new THREE.Mesh(new THREE.BufferGeometry());
+          face.edgeMesh = new THREE.LineSegments(
           	new THREE.BufferGeometry(), this._edgeMaterial);
-          this._sheet.add(faceMesh, edgeMesh);
+          this._sheet.add(face.mesh, face.edgeMesh);
+        } else {
+          face.mesh = this._sheet.children[2 * i + 0];
+          face.edgeMesh = this._sheet.children[2 * i + 1];
         }
         
-        const face = this._faces[i];
         const positions = face.positions;
         const uvs = face.uvs;
         const vertexCount = positions.length;
-        
         const triangleCount = vertexCount - 2;
         const facePositionBuffer = new Float32Array(9 * triangleCount);
         const faceUvBuffer = new Float32Array(6 * triangleCount);
@@ -523,12 +541,11 @@ class SolutionStage extends THREE.Group {
           u1.toArray(faceUvBuffer, 6 * j + 2);
           u2.toArray(faceUvBuffer, 6 * j + 4);
         }
-        const faceMesh = this._sheet.children[2 * i + 0];
-        faceMesh.material = face.side
+        face.mesh.material = face.side
         	? this._faceMaterial : this._faceBackMaterial;
-        faceMesh.geometry.setAttribute('position',
+        face.mesh.geometry.setAttribute('position',
         	new THREE.BufferAttribute(facePositionBuffer, 3));
-        faceMesh.geometry.setAttribute('uv',
+        face.mesh.geometry.setAttribute('uv',
         	new THREE.BufferAttribute(faceUvBuffer, 2));
        
         const lineCount = vertexCount;
@@ -544,10 +561,9 @@ class SolutionStage extends THREE.Group {
           n.toArray(edgeNormalBuffer, 6 * j + 0);
           n.toArray(edgeNormalBuffer, 6 * j + 3);
         }
-        const edgeMesh = this._sheet.children[2 * i + 1];
-        edgeMesh.geometry.setAttribute('position',
+        face.edgeMesh.geometry.setAttribute('position',
         	new THREE.BufferAttribute(edgePositionBuffer, 3));
-        edgeMesh.geometry.setAttribute('normal',
+        face.edgeMesh.geometry.setAttribute('normal',
         	new THREE.BufferAttribute(edgeNormalBuffer, 3));
       }
       
@@ -556,6 +572,42 @@ class SolutionStage extends THREE.Group {
           i >= 2 * this._faces.length;
           --i) {
         this._sheet.children[i].removeFromParent();
+      }
+    }
+
+    if (this._uvSheetNeedsUpdate) {
+      this._uvSheetNeedsUpdate = false;
+      if (this.isFocused) {
+        if (this._uvSheet == null) {
+          this._uvSheet = new THREE.Group();
+          this._uvSheet.layers.set(uvLayer);
+          this._root.add(this._uvSheet);
+        }
+
+        let frontFaceCount = 0;
+        for (let i = 0; i < this._faces.length; ++i) {
+          const face = this._faces[i];
+          if (!face.side) {
+            continue;
+          }
+          let j = frontFaceCount++;
+          if (this._uvSheet.children.length <= j) {
+            face.uvMesh = new THREE.Mesh(face.mesh.geometry, uvMaterial);
+            face.uvMesh.layers.set(uvLayer);
+            this._uvSheet.add(face.uvMesh);
+          } else {
+            face.uvMesh = this._uvSheet.children[j];
+          }
+        }
+
+        for (let j = frontFaceCount; j < this._uvSheet.children.length; ++j) {
+          this._uvSheet.children[j].removeFromParent();
+        }
+      } else {
+        if (this._uvSheet != null) {
+          this._uvSheet.removeFromParent();
+          this._uvSheet = null;
+        }
       }
     }
     
@@ -671,17 +723,33 @@ class Camera extends THREE.OrthographicCamera {
   }
 }
 
+class Hud {
+  constructor () {
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.OrthographicCamera(0, 1, 1, 0, -1000, 1000);
+  }
+
+  onWindowResize() {
+    this.camera.right = window.innerWidth;
+    this.camera.top = window.innerHeight;
+    this.camera.updateProjectionMatrix();
+  }
+}
+
 const scene = new THREE.Scene();
+const hud = new Hud();
 const renderer = new THREE.WebGLRenderer();
 const camera = new Camera();
 const raycaster = new THREE.Raycaster();
 const textureLoader = new THREE.TextureLoader();
+const uvRenderTarget = new THREE.WebGLRenderTarget(200, 200);
 const folder = new Folder();
 const solutionStages = [];
 const controlPoints = [];
 let t = null;
 let controlPointDrag = null;
 let focusedSolutionStage = null;
+let uvMaterial = null;
 
 document.body.appendChild(renderer.domElement);
 window.addEventListener('resize', onWindowResize, false);
@@ -689,12 +757,18 @@ renderer.domElement.addEventListener('mousedown', onMouseDown, false);
 renderer.domElement.addEventListener('mouseup', onMouseUp, false);
 renderer.domElement.addEventListener('mousemove', onMouseMove, false);
 
-requestAnimationFrame(start);
+// This is very dirty. Need to change to promises.
+loadShader({
+  name: "uv",
+  callback: function (uvMaterial_) {
+    uvMaterial = uvMaterial_;
+    requestAnimationFrame(start);
+  }
+});
 
 function start(tMillis) {
 	t = tMillis / 1000.0;
   
-  renderer.setClearColor(new THREE.Color(0x888888));
   renderer.autoClear = false;
   renderer.sortObjects = false;
   
@@ -704,6 +778,14 @@ function start(tMillis) {
   const bottomLight = new THREE.DirectionalLight(0x444444);
   bottomLight.position.set(-0.5, -1.0, 0.0);
   scene.add(bottomLight);
+
+  const uvRenderTargetPreview = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({ map: uvRenderTarget.texture })
+  );
+  uvRenderTargetPreview.position.set(210, 210, 0);
+  uvRenderTargetPreview.scale.set(400, 400, 1);
+  hud.scene.add(uvRenderTargetPreview);
   
   const stage0 = new SolutionStage({
   	faces: [{
@@ -748,16 +830,27 @@ function step(tMillis) {
   
   camera.step();
   
+  renderer.setRenderTarget(uvRenderTarget);
+  renderer.setClearColor(new THREE.Color(0));
+  renderer.clear();
+  camera.layers.set(uvLayer);
+  renderer.render(scene, camera);
+
+  renderer.setRenderTarget(null);
+  renderer.setClearColor(new THREE.Color(0x888888));
   renderer.clear();
   camera.layers.set(defaultLayer);
   renderer.render(scene, camera);
   camera.layers.set(uiLayer);
   renderer.render(scene, camera);
+
+  renderer.render(hud.scene, hud.camera);
 }
 
 function onWindowResize() {
 	renderer.setSize(window.innerWidth, window.innerHeight);
   camera.onWindowResize();
+  hud.onWindowResize();
 }
 
 function onMouseDown(event) {
@@ -881,8 +974,12 @@ function focusSolutionStage(stage) {
 	if (focusedSolutionStage === stage) {
   	return;
   }
+  if (focusedSolutionStage) {
+    focusedSolutionStage.isFocused = false;
+  }
   focusedSolutionStage = stage;
   if (stage) {
+    stage.isFocused = true;
   	const position = stage.getWorldPosition(new THREE.Vector3());
   	camera.pursueVisibleArea(stage.boundingBox.clone()
       .translate(position)
@@ -1014,4 +1111,57 @@ function rotation2AssumingSameLength(u, v, m = new THREE.Matrix3()) {
 function translate2(m, v) {
 	m.elements[6] += v.x;
   m.elements[7] += v.y;
+}
+
+function loadFile(path, callback) {
+  let callbackCalled = false;
+  const guardedCallback = function (result) {
+    if (callbackCalled) {
+      return;
+    }
+    callbackCalled = true;
+    callback(result, path);
+  }
+  const failureCallback = function () { guardedCallback(null); }
+
+  const request = new XMLHttpRequest();
+  request.open('GET', path, true);
+  request.timeout = 5000;
+  request.onerror = failureCallback;
+  request.ontimeout = failureCallback;
+  request.onload = function () { guardedCallback(request.responseText);}
+
+  request.send(null);
+}
+
+function loadShader(args) {
+  const callback = requireNamedArgument('callback', args);
+  const name = args.name;
+  let vertexShaderName, fragmentShaderName;
+  if (name) {
+    vertexShaderName = name;
+    fragmentShaderName = name;
+  } else {
+    vertexShaderName = requireNamedArgument('vertex', args);
+    fragmentShaderName = requireNamedArgument('fragment', args);
+  }
+  const vertexShaderPath = vertexShaderName + "_v.glsl";
+  const fragmentShaderPath = fragmentShaderName + "_f.glsl";
+
+  const shaderArgs = {};
+  const loadedCallback = function (content, path) {
+    if (path == vertexShaderPath) {
+      shaderArgs.vertexShader = content;
+    } else if (path == fragmentShaderPath) {
+      shaderArgs.fragmentShader = content;
+    }
+
+    if ('vertexShader' in shaderArgs && 'fragmentShader' in shaderArgs) {
+      const result = new THREE.ShaderMaterial(shaderArgs);
+      callback(result);
+    }
+  }
+
+  loadFile(vertexShaderPath, loadedCallback);
+  loadFile(fragmentShaderPath, loadedCallback);
 }

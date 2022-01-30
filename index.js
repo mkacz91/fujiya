@@ -721,8 +721,7 @@ function start(tMillis) {
       ],
       side: true,
     }],
-    texture: textureLoader.load(
-    	"https://pbs.twimg.com/media/DTyfF7aVMAAE_Hl.jpg"),
+    texture: textureLoader.load("shaggy.jpg"),
   });
   scene.add(stage0);
   solutionStages.push(stage0);

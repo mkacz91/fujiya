@@ -10,5 +10,7 @@ Chain of thoughts leading to starting this project:
 
  1. Sit at a restaurant Fujiya of Japan in Zurich.
  2. They have chopsticks wrapped in a paper with their logotype.
- 3. Notice that when you fold the paper right way, you can create words.
+ 3. Notice that when you fold the paper the right way, you can create words.
  4. How about I create a game that allows you to fold paper to uncover hidden pictures?
+
+ Very much work in progress. Try live at https://mkacz91.github.io/fujiya/
